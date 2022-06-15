@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finding the passwords to Everybody's Golf (PAL, PS2)</title>
+    <link rel="stylesheet" href="../styles/basic.css">
+</head>
+
+<body>
+    <div class="primary-content">
+        <h1 id="title">Finding the elusive passwords for Everybody's Golf (PAL, PS2)</h1>
+        <p><strong>Cheatcodes are at the bottom of this page, but you'd better believe I'm not going to let you go
+                without a technical writeup!</strong></p>
+        <h1 id="what-is-this">What is this?</h1>
+        <p>Everybody's Golf (Hot Shots Golf in the NTSC-U region) was a series of golf games that ranged from the
+            PS1-PS4 region.</p>
+        <p>so, for clarification's sake, there are three different games called Everybody's Golf. One of them is the PAL
+            counterpart of the PS2 game known in the US as Hot Shots Golf Fore! That's the game this writeup is about.
+        </p>
+        <h1 id="why">Why?</h1>
+        <p>good question</p>
+        <p>the original motivation was simply the fact that the information wasn't readily available anywhere, and i'm
+            not sure if <em>anyone</em> has it anymore. it was my first time reverse engineering a PS2 game, and it was
+            <em>just</em> slippery enough to be entertaining to dig through.
+        </p>
+        <h1 id="how">How?</h1>
+        <p>First of all I want to thank the developers of PCSX2 who helped make key improvements to the emulator's
+            built-in debugger. In particular, thanks to F0bes for working to <a
+                href="https://github.com/PCSX2/pcsx2/pull/4974">implement memory search functionality in the
+                emulator</a>. Emulator development is often a thankless job, and they don't get the credit they deserve.
+        </p>
+        <p>Key tools were:</p>
+        <ul>
+            <li>A recent version of <a href="https://pcsx2.net/">PCSX2</a>. (As of 2022-06-14 only the WXWidgets variant
+                of PCSX2 contains the debugger GUI)</li>
+            <li><a href="https://ghidra-sre.org/">Ghidra</a>, the free and open source decompiler.</li>
+            <li><a href="https://github.com/beardypig/ghidra-emotionengine">Ghidra-EmotionEngine</a></li>
+        </ul>
+        <h2 id="technobabble-ahead">Technobabble ahead</h2>
+        <p>In case you've never played the game, passwords (in the PAL/NTSC-U versions) are six character strings of
+            letters ranging from A-Z. Interestingly the NTSC-J version of this game doesn't use A-Z, instead opting for
+            Japanese characters. (no way this would come into play... right? :P )</p>
+        <p>Early attempts involved searching the binaries with regular expressions to find anything that resembled a
+            cheat code. In particular, I was hoping to find many code-like strings adjacent to one another. I even went
+            as far as dumping the memory of the emulated system in case they were part of a compressed block of data
+            on-disc.</p>
+        <p>After that approach yielded nothing, I tried to find where the cheat code was actually being stored in
+            memory, again to no avail--it clearly wasn't being stored in either Ascii/UTF8 or UTF-16. After a while I
+            broke out Cheat Engine, and did a search for an unknown byte value. This led me to the password entered in
+            memory, which for some odd reason was being mapped to values ranging from 0x20 to 0x39. What's weirder?
+            These values were being used as indices into some sort of lookup table I didn't yet understand. At this
+            point, it was clearly time to bring out the big guns, so I busted out Ghidra.</p>
+        <p>Something weird about this game is that its code is split up into several binaries which are all stored in
+            separate files on the disc. If you open up an individual file, you'll quickly notice a large number of
+            global references--functions, pointers, and raw data. That's normal. What's not normal is that the
+            references themselves appear to be nonsense.</p>
+        <p>Turns out that, despite the game code being spread through multiple files, all of the files reference data
+            within each other, and make calls directly to each other. It's not quite static linking, not quite dynamic
+            linking. I don't know enough to have a good guess on why this is. Apparently, on boot, the game loads all of
+            its code files into the exact same regions of memory, making the global references line up consistently. The
+            files didn't match 1:1 with the target memory in many areas, and rather than spend the time reverse
+            engineering the reasons behind that, I just ripped out the memory from a savestate and opened <em>that</em>
+            in Ghidra instead. It disassembled just fine and left me with a perfectly usable workspace.</p>
+        <p>With the game disassembled and decompiled, I was able to start tracking the workflow more. I hit some major
+            stumbling blocks at several points, and learned a very important lesson about reverse engineering binaries:
+            <strong>If the decompilation makes no sense, read the assembly first.</strong> The PS2 has a MIPS
+            instruction called psubb. This takes two 128-bit registers, and performs 16 parallel subtractions--the bytes
+            don't carry from one another, etc. This came up often in stdlib-ish functions like strcpy, strcmp, and
+            strlen, which use large-register functions when possible to parallelize the process. Due to the fact that
+            Ghidra had no way to express this function succinctly, it exploded into about <em>twenty lines</em> of
+            unreadable shifts, concatenations, and byte splitting. I would have also been saved from the confusion had I
+            figured out sooner that the &quot;nonsense&quot; code was being guarded by alignment checks. Life moves on.
+        </p>
+        <p>My first major advancement came when I was able to disassemble the function that was performing the lookup
+            table transformation for passwords. I took a closer look at the table being used, and took a wild
+            guess--this is a Japanese game from 2005, what if it's Shift-JIS?</p>
+        <p>Jackpot. The passwords were being transformed into the Romanji equivalents of the original characters input
+            by the user. This doesn't aid in the password logic in any way, and most English in the game uses
+            single-byte characters... It makes sense for the Japanese version to use Shift-JIS, but due to how the
+            password codes are set up, there's no restriction or need for a specific character encoding. Maybe it made
+            sense in the original codebase--it's impossible for me to see the preprocessor directives, after all.</p>
+        <p>After figuring out that the strcpy and strlen functions were, uh, themselves, I quickly spotted something
+            interesting: A block of code where the password was being compared to a constant string, PALEBG. Was it a
+            cheat code? Nope. In fact, once I finished labeling and reversing, I found out the code calling the strcmp
+            should <em>never</em> get hit. Forcing the branch to be taken with a nop had no notable effect, either. Was
+            this a troll password from the developers, or testing code left in the game? I choose to believe it's the
+            former, because it's more funny that way.</p>
+        <p>My next breakthrough was figuring out the code path responsible for giving the user the &quot;The password
+            entered was incorrect&quot; message. The method for processing cheats had a very complicated control flow
+            when disassembled (several gotos, multiple while loops and tracking variables), and this was a nice anchor
+            to reason around.</p>
+        <p>As I went on, I started to make some deductions about the actual control flow. I found the codepath for
+            correct passwords and worked backwards from there, leading me to a giant block of nonsense multiplications
+            against random numbers, arbitrary bitshifts, confusing conditions, all wrapped up in a loop. Sight-reading
+            the code, I was fearing at first that this was an attempt at control flow obfuscation, which I know from
+            experience can take an annoyingly long time to undo. I was very relieved when I saw the loop condition and
+            realized it only ran for six iterations at most--the length of the password.</p>
+        <p>Ultimately, what I found is that the passwords are <em>not</em> stored in memory, nor on disc. Instead, they
+            are <strong>procedurally generated</strong> by the nonsense math, which generates one character at a time,
+            compares the current character in the password to it, and repeats until the password is or isn't valid. It
+            then repeats this process for each potential password that can be generated. It seeds this process by
+            pulling a 16-bit value from a constant table of 101 entries stored in memory, and ends when it sees null
+            bytes.</p>
+        <p>Each entry in the table is 8 bytes long. The first 4 bits describe the (2-byte) seed, and the next 4 describe
+            what that cheat should do or unlock.</p>
+        <p>Armed with this knowledge, I ripped the decompiled &quot;scrambler&quot; code out and pasted it into my IDE,
+            provided it all the seeds, fixed the compile errors, and was able to generate the table presented below.</p>
+        <p>Phew.</p>
+        <h1 id="the-codes">The Codes</h1>
+        <p>Thanks for reading everything above. (you'd never dare to just scroll by everything else without saying
+            howdy, wouldya?)</p>
+        <p>Here's all the codes I believe the game has. I documented them by hand because Ghidra was starting to hurt my
+            eyes. Note that, as far as equipment, clubs, courses, and outfits, <strong>these codes only make those items
+                <em>available to unlock</em> in the ingame shop</strong>. If you don't want to earn the points you'll
+            need to actually hack.</p>
+        <p>Several of these codes are marked ???. They <em>are</em> valid codes recognized by the game, but they won't
+            unlock unless you've already got something else unlocked (I started from a clean save). Feel free to make a
+            pull request if you decide to document anything I haven't.</p>
+        <pre>
+            <code>
+RPWMXZ: Mini Golf Course 2
+QEZVMA: Aya's Costume
+WBJRCN: Kazuma's Costume
+QQRYCA: Suzuki's Costume
+TPGEIA: Billie's Costume
+NGMXQX: Capsule 01
+WHNMJO: Capsule 02
+ZXEVGR: Capsule 03
+GHWXKP: Capsule 04
+HGCFHN: Capsule 05
+LKXHKZ: Capsule 06
+TVNWMA: Capsule 07
+RWWFRQ: Capsule 08
+EIVEMS: Capsule 09
+EQQAEN: Capsule 10
+QXQEXW: Capsule 11
+QMNDRY: Wallpaper Set 2
+GHACIA: EG CD/Music
+MJYFDI: EG CD/Voice
+MZFXVV: EG Rules
+IJKBKO: Hecklets
+NHFMIM: Voice Changer
+MNJKYK: Landing Grid
+PDKPZO: Extra Video
+RBGNGU: Replay Cam A
+LXLXMP: Replay Cam B
+XKGWWY: Replay Cam C
+HJKOFH: Extra Pose Cam
+SQALZW: Extra Swing Cam
+XKSVWX: Menu Aya
+OTADIO: Menu Garuda
+XVNMAF: Menu Nina
+MPRPMK: Big Air
+NNCVRF: ???
+HSBFHK: ???
+MFGPMV: Pin Hole
+NNZSCL: ???
+QVGCCE: ???
+DHQIBF: ???
+YYVUJD: ???
+YORZIX: Infinity
+UAIUBW: ???
+ZMOQUR: ???
+DZJAPY: 100t Hammer
+ARHMJL: ???
+OHZBFL: ???
+FKDCHO: Beginners
+SQBTQV: Big Air
+LEZWAR: Pin Hole
+KRWHBN: Turbo Spin
+OPFNBT: Infinity
+VOXNDK: Sidespin
+CBBSBT: Aloha Beach Resort
+BNDBSI: Western Valley C.C.
+KQKYFW: Bagpipe Classic
+SKRZTX: United Forest G.C.
+DDPORS: Day Dream C.C.
+UAIXCZ: Wild Green C.C.
+NMYRPC: Silk Road Classic
+OVNKTY: Blue Lagoon C.C.
+JKOCAU: Caddie &quot;Yumi&quot;
+JJHANR: Caddie &quot;Simon&quot;
+ZPIIAH: Caddie &quot;Sandy&quot;
+UTNJSQ: Caddie &quot;Arthur&quot;
+NLORIE: Caddie &quot;Daxter&quot;
+KLYTIY: Caddie &quot;Clank&quot;
+OIQSAW: Caddie &quot;Pipo Monkey&quot;
+IBCTZC: &quot;Your love for Aya deepens.&quot;
+UWLGOI: &quot;Your love for Kazuma deepens.&quot;
+PPSYTX: ???
+OYKYTE: ???
+DJISQL: ???
+QQOYPF: ???
+YBPECY: ???
+MJGONJ: ???
+LLNWSC: ???
+SOZYTQ: ???
+EAVLLP: ???
+UDQZFC: ???
+GPWDXU: &quot;Your love for Suzuki deepens.&quot;
+SFLYZT: ???
+CNEPVJ: ???
+WYCJPX: ???
+FGCYHC: ???
+DVTDIM: ???
+WRLGRK: &quot;Your love for Billie deepens.&quot;
+KKZIVD: ???
+EEUUEC: ???
+SDVTSX: ???
+DEZZJO: ???
+TJJICG: ???
+OBQRHN: &quot;Your love for Mari deepens.&quot;
+EVNVRE: &quot;Your love for Aimi deepens.&quot;
+WJIEVW: ???
+ALYZFU: &quot;Your love for Sean deepens.&quot;
+WTQRET: ???
+SAACIB: ???
+TEHTUC: ???
+TEJQPO: Play against all characters.
+FWHTOG: Lower tourney stage level
+HVLHHA: Low-price sale
+        </code>
+    </pre>
+    </div>
+
+</body>
