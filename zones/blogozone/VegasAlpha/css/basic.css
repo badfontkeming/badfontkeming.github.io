@@ -1,0 +1,36 @@
+/* quick n dirty "good enough" style for my posts.
+   i don't really need more than this right now so 
+   im not going to use more than this right now */
+
+html {
+    background-color: rgb(9, 15, 32)
+}
+
+body {
+    display: flex;
+    justify-content: center;
+    color: rgb(201, 201, 201);
+    font-family: sans-serif;
+    
+}
+
+a:link {
+    color: rgb(141, 187, 214)
+}
+
+a:visited {
+    color: rgb(198, 150, 218);
+}
+
+pre {
+    color: rgb(204, 226, 211);
+    background-color: rgb(10,10,10);
+    padding-left: 1.15rem;
+}
+
+.primary-content {
+    max-width: 40rem;
+    background-color: rgb(26, 33, 53);
+    box-shadow: 0px 0px 10px 10px rgb(26, 33, 53)
+
+}
